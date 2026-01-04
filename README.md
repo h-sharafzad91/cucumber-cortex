@@ -1,6 +1,6 @@
 # Cucumber Cortex
 
-AI trading agent service for Cucumber Trading Arena - the "brain" that makes trading decisions using LLMs.
+AI trading agent service for Cucumber Trading Arena - the "brain" that makes trading decisions using LLMs. Named after the brain's cortex which handles complex decision-making, this service processes market data and makes intelligent trading decisions.
 
 ## System Architecture
 
@@ -74,11 +74,11 @@ AI trading agent service for Cucumber Trading Arena - the "brain" that makes tra
 ## This Repository (cucumber-cortex)
 
 The AI trading agent that:
-- Subscribes to per-agent Redis tick channels
-- Builds context-aware prompts with market data & portfolio
-- Calls LLM providers (OpenAI, Anthropic, Google, xAI)
-- Parses trading decisions from LLM responses
-- Submits actions back to Cerebellum for execution
+- **Subscribes to per-agent Redis tick channels**: Listens to `arena:ticks:{roundId}:{agentId}` for each active agent. Each subscription runs independently, so Agent A getting its tick doesn't block Agent B
+- **Builds context-aware prompts with market data & portfolio**: Constructs a detailed prompt for the LLM including the agent's personality, current market prices, open positions, cash balance, and risk parameters
+- **Calls LLM providers (OpenAI, Anthropic, Google, xAI)**: Supports multiple LLM backends. The model is selected based on the agent's configuration (e.g., one agent uses GPT-4o, another uses Claude)
+- **Parses trading decisions from LLM responses**: Extracts structured action (BUY_MARKET, SELL_MARKET, HOLD), asset, size, and reasoning from the LLM's text response
+- **Submits actions back to Cerebellum for execution**: Sends HTTP POST to Cerebellum with the trade decision. Cerebellum handles actual execution and PnL calculation
 
 ## Communication Flow
 
@@ -196,6 +196,11 @@ class RedisSubscriber:
         # Ticks arrive at agent's configured interval
 ```
 
+**Why per-agent channels?**
+- Agent A (30s tick) and Agent B (60s tick) receive ticks at different times
+- Prevents message queue congestion
+- Allows Cortex to scale horizontally (different Cortex instances can handle different agents)
+
 ### Agent Worker (Non-Blocking Processing)
 
 ```python
@@ -210,6 +215,12 @@ async def tick_handler(tick_json: str):
     task = asyncio.create_task(process_in_background())
     background_tasks.add(task)
 ```
+
+**Why non-blocking?**
+- LLM API calls can take 2-30+ seconds (especially with rate limits)
+- If we `await` directly, subsequent ticks would be delayed
+- Background tasks allow multiple ticks to be processed concurrently
+- Critical for agents with fast tick intervals (10-15s)
 
 ### Prompt Builder
 
@@ -253,12 +264,12 @@ def build_prompt(tick: TickPayload, agent_config: AgentConfig) -> str:
 
 ## LLM Providers
 
-| Provider | Models | Config Key |
-|----------|--------|------------|
-| OpenAI | gpt-4o, gpt-4o-mini | `OPENAI_API_KEY` |
-| Anthropic | claude-3-5-sonnet | `ANTHROPIC_API_KEY` |
-| Google | gemini-1.5-flash | `GOOGLE_API_KEY` |
-| xAI | grok-beta | `XAI_API_KEY` |
+| Provider | Models | Config Key | Cost (approx) |
+|----------|--------|------------|---------------|
+| OpenAI | gpt-4o, gpt-4o-mini | `OPENAI_API_KEY` | $0.15-2.50/1M tokens |
+| Anthropic | claude-3-5-sonnet | `ANTHROPIC_API_KEY` | $3-15/1M tokens |
+| Google | gemini-1.5-flash | `GOOGLE_API_KEY` | $0.075/1M tokens |
+| xAI | grok-beta | `XAI_API_KEY` | $5/1M tokens |
 
 ### Model Selection
 
@@ -269,10 +280,39 @@ Models are selected based on agent configuration:
 {
     "worker_config": {
         "model": "gpt-4o-mini",  # or "claude-3-5-sonnet", "gemini-1.5-flash"
-        "temperature": 0.7,
-        "max_tokens": 500
+        "temperature": 0.7,      # Higher = more random/creative decisions
+        "max_tokens": 500        # Max response length
     }
 }
+```
+
+**Choosing a model:**
+- **gpt-4o-mini**: Fast, cheap, good for high-frequency trading (10-30s ticks)
+- **gpt-4o**: More sophisticated reasoning, better for complex strategies
+- **claude-3-5-sonnet**: Strong reasoning, good at following complex instructions
+- **gemini-1.5-flash**: Very fast and cheap, good for simple strategies
+- **grok-beta**: Alternative option with different "personality"
+
+### Action Parsing
+
+The LLM returns a text response that must be parsed into structured action:
+
+```python
+# action_parser.py
+def parse_action(llm_response: str) -> AgentAction:
+    # LLM is prompted to respond in a specific format:
+    # ACTION: BUY_MARKET
+    # ASSET: ETH_USDC
+    # SIZE_USD: 100
+    # REASONING: ETH showing bullish momentum...
+
+    # Parser extracts these fields using regex or structured output
+    return AgentAction(
+        action="BUY_MARKET",
+        asset="ETH_USDC",
+        size_usd=100,
+        reasoning="ETH showing bullish momentum..."
+    )
 ```
 
 ## Tick Processing Flow
