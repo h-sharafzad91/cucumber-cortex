@@ -407,3 +407,99 @@ docker run -p 8000:8000 --env-file .env cucumber-cortex
 - **Non-blocking tick processing**: Each tick is processed in a background task, preventing slow LLM responses from blocking subsequent ticks
 - **Per-agent subscriptions**: Each agent subscribes to its own Redis channel, enabling independent tick intervals
 - **Rate limit handling**: If LLM rate limits are hit, processing continues for other agents
+
+## Railway Deployment
+
+### 1. Connect Repository
+1. Go to [Railway](https://railway.app) and open your Cucumber project
+2. Click "New Service" → "GitHub Repo"
+3. Select `h-sharafzad91/cucumber-cortex`
+
+### 2. Configure Environment Variables
+In Railway dashboard, add these variables:
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `CEREBELLUM_URL` | `http://cucumber-cerebellum.railway.internal:3001` | Internal URL (private networking) |
+| `REDIS_URL` | `${{Redis.REDIS_URL}}` | Reference Railway Redis plugin |
+| `OPENAI_API_KEY` | `sk-...` | Your OpenAI API key |
+| `ANTHROPIC_API_KEY` | `sk-ant-...` | Your Anthropic API key (optional) |
+| `GOOGLE_API_KEY` | `...` | Your Google AI API key (optional) |
+| `XAI_API_KEY` | `...` | Your xAI API key (optional) |
+| `LOG_LEVEL` | `INFO` | Logging level |
+| `PORT` | `8000` | Port for health checks |
+
+**Note:** At least one LLM provider API key is required. Add keys for providers your agents will use.
+
+### 3. Build Settings
+Railway auto-detects Python. Verify these settings:
+- **Builder**: Nixpacks
+- **Build Command**: `pip install -r requirements.txt`
+- **Start Command**: `uvicorn src.main:app --host 0.0.0.0 --port $PORT`
+
+### 4. Python Version
+Create a `runtime.txt` in the repo root if you need a specific Python version:
+```
+python-3.11
+```
+
+### 5. Private Networking
+Cortex uses Railway's private networking:
+- Internal communication with Cerebellum via `*.railway.internal`
+- Internal connection to Redis plugin
+- No public domain needed (Cortex has no public-facing API)
+
+### 6. Health Check
+Railway will use the `/health` endpoint to verify the service is running:
+```
+GET /health → {"status": "ok"}
+```
+
+### 7. Scaling Considerations
+For production with many agents:
+- Increase Railway service replicas
+- Consider separate Cortex instances per arena
+- Monitor LLM API rate limits
+
+### Railway Architecture (Cortex Position)
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    RAILWAY PROJECT                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌─────────────────┐    ┌─────────────────┐                │
+│  │  cucumber-web   │    │ cucumber-admin  │                │
+│  │   (Next.js)     │    │   (Next.js)     │                │
+│  │  Public Domain  │    │  Admin Domain   │                │
+│  └────────┬────────┘    └────────┬────────┘                │
+│           │                      │                          │
+│           └──────────┬───────────┘                          │
+│                      ▼                                       │
+│           ┌─────────────────┐                               │
+│           │cucumber-cerebellum│                              │
+│           │   (Node.js)     │                               │
+│           └────────┬────────┘                               │
+│                    │                                         │
+│        ┌───────────┼───────────┐                            │
+│        ▼           ▼           ▼                            │
+│  ┌──────────┐ ┌──────────┐ ┌─────────────────┐             │
+│  │PostgreSQL│ │  Redis   │ │ ★ cucumber-    │             │
+│  │ (Plugin) │ │ (Plugin) │ │    cortex ★    │             │
+│  └──────────┘ └────┬─────┘ │   (Python)     │             │
+│                    │       │  No Public URL  │             │
+│                    │       └────────┬────────┘             │
+│                    │                │                       │
+│                    └────────────────┘                       │
+│                    Redis Pub/Sub (Internal)                 │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Deployment Order
+Deploy Cortex AFTER Cerebellum and Redis are running:
+1. PostgreSQL plugin (first)
+2. Redis plugin (second)
+3. cucumber-cerebellum (third)
+4. cucumber-cortex (fourth) ← This service
+5. cucumber-web (fifth)
+6. cucumber-admin (sixth)
