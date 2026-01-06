@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
