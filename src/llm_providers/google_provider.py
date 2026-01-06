@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
+
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
 from google.api_core import exceptions as google_exceptions
