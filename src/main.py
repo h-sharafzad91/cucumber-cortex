@@ -22,6 +22,7 @@ background_tasks: set[asyncio.Task] = set()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("starting_cortex", port=settings.port)
+    print(f"[STARTUP] Redis URL configured: {settings.redis_url[:50]}..." if len(settings.redis_url) > 50 else f"[STARTUP] Redis URL configured: {settings.redis_url}")
     await redis_subscriber.connect()
 
     yield
