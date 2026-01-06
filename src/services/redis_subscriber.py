@@ -1,4 +1,5 @@
 import asyncio
+import ssl
 from typing import Callable, Awaitable
 from datetime import datetime
 
@@ -55,9 +56,12 @@ class RedisSubscriber:
             try:
                 if settings.redis_url.startswith('rediss://'):
                     print(f"[{datetime.now().isoformat()}] [REDIS] Using TLS connection (rediss://)")
+                    ssl_context = ssl.create_default_context()
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
                     redis_conn = redis.from_url(
                         settings.redis_url,
-                        ssl_cert_reqs=None
+                        ssl=ssl_context
                     )
                 else:
                     print(f"[{datetime.now().isoformat()}] [REDIS] Using standard connection (redis://)")
