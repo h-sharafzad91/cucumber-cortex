@@ -73,6 +73,7 @@ RISK_TOLERANCE_BEHAVIORS = {
 class PromptBuilder:
     def build_system_prompt(self, agent: AgentConfig) -> str:
         persona = agent.persona_config
+        print(f"[AGENT CONFIG] {agent.name}: strategy={persona.strategy}, risk={persona.risk_tolerance}, style={persona.trading_style}")
         goal_section = ""
         if persona.goal:
             goal_section = f"\nYOUR GOAL:\n{persona.goal}\n"
@@ -141,7 +142,7 @@ HOLD:
                 prices = [c.close for c in candles]
                 trend = "↑" if prices[-1] > prices[0] else "↓" if prices[-1] < prices[0] else "→"
                 change_pct = ((prices[-1] - prices[0]) / prices[0]) * 100
-                candles_1m = f"{prices[0]:.0f}→{prices[-1]:.0f} ({trend}{change_pct:+.1f}%)"
+                candles_1m = f"{prices[0]:.0f}→{prices[-1]:.0f} ({trend}{change_pct:+.2f}%)"
 
         print(f"[PROMPT] Candles data: {candles_1m}")
 
