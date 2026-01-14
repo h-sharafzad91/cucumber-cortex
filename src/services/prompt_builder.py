@@ -143,6 +143,8 @@ HOLD:
                 change_pct = ((prices[-1] - prices[0]) / prices[0]) * 100
                 candles_1m = f"{prices[0]:.0f}→{prices[-1]:.0f} ({trend}{change_pct:+.1f}%)"
 
+        print(f"[PROMPT] Candles data: {candles_1m}")
+
         positions = "None"
         if tick.portfolio.positions:
             pos_list = []
@@ -152,12 +154,15 @@ HOLD:
                 pos_list.append(f"{p.asset}:{p.size:.2f}@{entry:.0f}({pnl:+.0f})")
             positions = " | ".join(pos_list) if pos_list else "None"
 
-        return f"""Tick#{tick.tick_id or "unknown"} | {tick.timestamp or "unknown"}
+        user_prompt = f"""Tick#{tick.tick_id or "unknown"} | {tick.timestamp or "unknown"}
 ETH: ${tick.market.ETH_USDC.price if tick.market.ETH_USDC.price is not None else 0:.2f} ({tick.market.ETH_USDC.source or "unknown"}) | {candles_1m}
 Cash: ${tick.portfolio.balance_usd if tick.portfolio.balance_usd is not None else 0:.2f} | Positions: {positions}
 Max order: ${tick.constraints.max_usd_order if tick.constraints.max_usd_order is not None else 0:.2f} | Trade: {", ".join(tick.constraints.allowed_assets) if tick.constraints.allowed_assets else "unknown"}
 
 What's your move? →"""
+
+        print(f"[PROMPT] User prompt:\n{user_prompt}")
+        return user_prompt
 
 
 prompt_builder = PromptBuilder()
