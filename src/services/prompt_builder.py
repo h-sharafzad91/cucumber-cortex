@@ -2,78 +2,99 @@ from ..schemas import TickPayload, AgentConfig
 from ..schemas.agent_config import TradingStyle, TradingStrategy, RiskTolerance
 
 
-STRATEGY_BEHAVIORS = {
-    TradingStrategy.MOMENTUM: """MOMENTUM STRATEGY:
-- BUY when price shows upward momentum (rising trend, positive % change)
-- SELL when momentum fades or reverses (trend slowing, negative % change)
-- Follow the trend - don't fight it
-- Enter on breakouts, exit on trend reversals""",
+def get_expected_move_threshold(tick_interval: int | None) -> float:
+    """Calculate expected price move % based on tick interval.
+    Shorter intervals = smaller expected moves = lower thresholds."""
+    tick_sec = tick_interval or 60
+    # Rough estimate: ~0.1% per minute on average for ETH
+    # Scale: 30s=0.05%, 60s=0.1%, 300s=0.5%, 3600s=1.5%
+    base_per_minute = 0.1
+    minutes = tick_sec / 60
+    return round(base_per_minute * (minutes ** 0.7), 2)  # sub-linear scaling
 
-    TradingStrategy.MEAN_REVERSION: """MEAN REVERSION STRATEGY:
-- BUY when price drops significantly below recent average (oversold)
-- SELL when price rises significantly above recent average (overbought)
-- Wait for extreme moves before trading
-- Expect prices to return to the mean""",
 
-    TradingStrategy.BREAKOUT: """BREAKOUT STRATEGY:
-- BUY when price breaks above resistance/recent highs
-- SELL when price breaks below support/recent lows
-- Look for strong volume on breakouts
-- Avoid trading in ranging/sideways markets""",
+def get_strategy_behavior(strategy: TradingStrategy, tick_interval: int | None) -> str:
+    """Get strategy behavior text dynamically adjusted for any tick interval."""
+    tick_sec = tick_interval or 60
+    threshold = get_expected_move_threshold(tick_interval)
+    half_threshold = round(threshold / 2, 2)
 
-    TradingStrategy.CUSTOM: """CUSTOM STRATEGY:
+    if strategy == TradingStrategy.MOMENTUM:
+        return f"""MOMENTUM STRATEGY (Your tick interval: {tick_sec}s):
+- Expected price move per tick: ~{threshold}%
+- BUY when price shows upward movement (>{half_threshold}% is a signal for you)
+- SELL when you have a position AND price shows downward movement
+- At {tick_sec}s intervals, don't wait for "big" moves - {threshold}% IS significant for you
+- Follow the trend direction, trade actively!"""
+
+    elif strategy == TradingStrategy.MEAN_REVERSION:
+        return f"""MEAN REVERSION STRATEGY (Your tick interval: {tick_sec}s):
+- Expected price move per tick: ~{threshold}%
+- BUY when price drops (a -{half_threshold}% dip is worth buying at {tick_sec}s intervals)
+- SELL when price rises and you have a position
+- At {tick_sec}s intervals, a -{threshold}% move is already a "dip" - don't wait longer
+- Buy dips, sell rallies - act on the moves you see!"""
+
+    elif strategy == TradingStrategy.BREAKOUT:
+        return f"""BREAKOUT STRATEGY (Your tick interval: {tick_sec}s):
+- Expected price move per tick: ~{threshold}%
+- BUY when price breaks upward (>{half_threshold}% move is a breakout for you)
+- SELL when price breaks downward and you have a position
+- At {tick_sec}s intervals, any clear directional move is a micro-breakout
+- Trade the breakouts you see, don't wait for bigger ones!"""
+
+    else:  # CUSTOM
+        return f"""CUSTOM STRATEGY (Your tick interval: {tick_sec}s):
+- Expected price move per tick: ~{threshold}%
 - Follow your custom trading instructions below
-- Use market data to inform your decisions
-- Apply your own judgment based on your goal""",
-}
+- Adjust your signals for {tick_sec}s timeframe"""
 
 TRADING_STYLE_BEHAVIORS = {
-    TradingStyle.PAPER_HANDS: """PAPER HANDS STYLE (Quick exits, minimize losses):
-- Exit positions quickly at first sign of trouble
-- Take small profits rather than holding for bigger gains
-- Cut losses immediately, don't wait for recovery
-- Prefer many small trades over few large ones
-- Trade frequency: HIGH (~60-80% of ticks)""",
+    TradingStyle.PAPER_HANDS: """PAPER HANDS STYLE (Trade frequently, quick in/out):
+- YOU SHOULD TRADE OFTEN - aim to trade on 60-80% of ticks!
+- Enter positions quickly when you see any signal
+- Exit positions quickly - don't wait for perfect exits
+- Small profits add up - take them!
+- If in doubt, TRADE rather than HOLD""",
 
-    TradingStyle.NORMAL: """NORMAL STYLE (Balanced risk management):
-- Hold positions through minor fluctuations
-- Use stop-loss and take-profit levels
-- Balance between capturing trends and protecting capital
-- Trade frequency: MODERATE (~30-50% of ticks)""",
+    TradingStyle.NORMAL: """NORMAL STYLE (Balanced trading):
+- Trade on clear signals - aim for 30-50% of ticks
+- Hold positions through minor noise
+- Balance between action and patience
+- Use your judgment on when to trade""",
 
-    TradingStyle.DEGEN: """DEGEN STYLE (Hold positions longer, higher risk):
-- Hold through volatility, trust your conviction
-- Let winners run much longer before taking profit
+    TradingStyle.DEGEN: """DEGEN STYLE (Conviction trading):
+- Take positions and HOLD through volatility
+- Let winners run - don't exit too early
 - Only exit on strong reversal signals
-- Accept higher drawdowns for bigger potential gains
-- Trade frequency: LOW-MODERATE (~20-40% of ticks)""",
+- Trade less frequently but with conviction (20-40% of ticks)
+- Big moves require patience""",
 }
 
 RISK_TOLERANCE_BEHAVIORS = {
     RiskTolerance.CONSERVATIVE: """CONSERVATIVE RISK:
-- Only trade on very clear, strong signals
-- Prioritize capital preservation over gains
-- Prefer smaller position sizes
-- Wait for high-confidence setups""",
+- Wait for clear signals before trading
+- Prioritize capital preservation
+- Use smaller position sizes
+- It's OK to HOLD more often""",
 
     RiskTolerance.MODERATE: """MODERATE RISK:
 - Trade on reasonably clear signals
 - Balance growth with protection
-- Standard position sizing
-- Accept moderate uncertainty""",
+- Standard position sizing""",
 
     RiskTolerance.AGGRESSIVE: """AGGRESSIVE RISK:
-- Act on smaller signals and movements
-- Prioritize growth over preservation
-- Willing to take larger positions
-- Accept higher volatility""",
+- ACT on even small signals - don't wait for perfect setups!
+- Any price movement in your strategy's direction = TRADE
+- Prioritize TRADING over waiting
+- You have aggressive risk tolerance - USE IT!""",
 }
 
 
 class PromptBuilder:
     def build_system_prompt(self, agent: AgentConfig) -> str:
         persona = agent.persona_config
-        print(f"[AGENT CONFIG] {agent.name}: strategy={persona.strategy}, risk={persona.risk_tolerance}, style={persona.trading_style}")
+        print(f"[AGENT CONFIG] {agent.name}: strategy={persona.strategy}, risk={persona.risk_tolerance}, style={persona.trading_style}, tick_interval={agent.tick_interval}s")
         goal_section = ""
         if persona.goal:
             goal_section = f"\nYOUR GOAL:\n{persona.goal}\n"
@@ -82,10 +103,7 @@ class PromptBuilder:
         if persona.description:
             custom_instructions = f"\nYOUR CUSTOM INSTRUCTIONS:\n{persona.description}\n"
 
-        strategy_behavior = STRATEGY_BEHAVIORS.get(
-            persona.strategy,
-            STRATEGY_BEHAVIORS[TradingStrategy.MOMENTUM]
-        )
+        strategy_behavior = get_strategy_behavior(persona.strategy, agent.tick_interval)
 
         style_behavior = TRADING_STYLE_BEHAVIORS.get(
             persona.trading_style,
@@ -142,7 +160,7 @@ HOLD:
                 prices = [c.close for c in candles]
                 trend = "↑" if prices[-1] > prices[0] else "↓" if prices[-1] < prices[0] else "→"
                 change_pct = ((prices[-1] - prices[0]) / prices[0]) * 100
-                candles_1m = f"{prices[0]:.0f}→{prices[-1]:.0f} ({trend}{change_pct:+.2f}%)"
+                candles_1m = f"{prices[0]:.2f}→{prices[-1]:.2f} ({trend}{change_pct:+.3f}%)"
 
         print(f"[PROMPT] Candles data: {candles_1m}")
 

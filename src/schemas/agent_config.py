@@ -77,3 +77,4 @@ class AgentConfig(BaseModel):
     name: str
     persona_config: PersonaConfig
     worker_config: WorkerConfig
+    tick_interval: int | None = None  # loaded from agent's settings in database

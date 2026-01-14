@@ -173,6 +173,7 @@ class AgentWorker:
             name=agent_data["name"],
             persona_config=PersonaConfig(**persona_config_data),
             worker_config=WorkerConfig(**agent_data.get("worker_config", {})),
+            tick_interval=agent_data.get("tick_interval"),
         )
 
         return cls(config)
