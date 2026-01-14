@@ -10,9 +10,15 @@ class Candle(BaseModel):
     timestamp: str
 
 
+class PricePoint(BaseModel):
+    price: float
+    timestamp: str
+
+
 class PriceData(BaseModel):
     price: float
     source: str
+    price_history: list[PricePoint] = []
 
 
 class Candles(BaseModel):

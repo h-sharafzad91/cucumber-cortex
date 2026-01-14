@@ -153,16 +153,16 @@ HOLD:
 {{"reasoning": "...", "action": "HOLD"}}"""
 
     def build_user_prompt(self, tick: TickPayload) -> str:
-        candles_1m = "Awaiting trend"
-        if tick.market.candles.get("ETH_USDC"):
-            candles = tick.market.candles["ETH_USDC"].m1[-5:]
-            if candles:
-                prices = [c.close for c in candles]
-                trend = "↑" if prices[-1] > prices[0] else "↓" if prices[-1] < prices[0] else "→"
-                change_pct = ((prices[-1] - prices[0]) / prices[0]) * 100
-                candles_1m = f"{prices[0]:.2f}→{prices[-1]:.2f} ({trend}{change_pct:+.3f}%)"
+        price_trend = "Awaiting data"
+        price_history = tick.market.ETH_USDC.price_history
+        if price_history and len(price_history) >= 2:
+            first_price = price_history[0].price
+            last_price = price_history[-1].price
+            trend = "↑" if last_price > first_price else "↓" if last_price < first_price else "→"
+            change_pct = ((last_price - first_price) / first_price) * 100
+            price_trend = f"{first_price:.2f}→{last_price:.2f} ({trend}{change_pct:+.3f}%) [{len(price_history)} ticks]"
 
-        print(f"[PROMPT] Candles data: {candles_1m}")
+        print(f"[PROMPT] Price trend: {price_trend}")
 
         positions = "None"
         if tick.portfolio.positions:
@@ -174,7 +174,7 @@ HOLD:
             positions = " | ".join(pos_list) if pos_list else "None"
 
         user_prompt = f"""Tick#{tick.tick_id or "unknown"} | {tick.timestamp or "unknown"}
-ETH: ${tick.market.ETH_USDC.price if tick.market.ETH_USDC.price is not None else 0:.2f} ({tick.market.ETH_USDC.source or "unknown"}) | {candles_1m}
+ETH: ${tick.market.ETH_USDC.price if tick.market.ETH_USDC.price is not None else 0:.2f} ({tick.market.ETH_USDC.source or "unknown"}) | Trend: {price_trend}
 Cash: ${tick.portfolio.balance_usd if tick.portfolio.balance_usd is not None else 0:.2f} | Positions: {positions}
 Max order: ${tick.constraints.max_usd_order if tick.constraints.max_usd_order is not None else 0:.2f} | Trade: {", ".join(tick.constraints.allowed_assets) if tick.constraints.allowed_assets else "unknown"}
 
