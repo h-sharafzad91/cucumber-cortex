@@ -170,7 +170,7 @@ HOLD:
             for p in tick.portfolio.positions:
                 entry = p.entry_price if p.entry_price is not None else 0
                 pnl = p.unrealized_pnl if p.unrealized_pnl is not None else 0
-                pos_list.append(f"{p.asset}:{p.size:.2f}@{entry:.0f}({pnl:+.0f})")
+                pos_list.append(f"{p.asset}:{p.size:.4f}@{entry:.0f}({pnl:+.0f})")
             positions = " | ".join(pos_list) if pos_list else "None"
 
         user_prompt = f"""Tick#{tick.tick_id or "unknown"} | {tick.timestamp or "unknown"}
