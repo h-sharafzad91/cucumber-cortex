@@ -18,7 +18,7 @@ class SmartTrigger:
         self.ticks_since_last_call = 0
 
     def should_call_llm(self, tick: TickPayload) -> tuple[bool, str]:
-        current_price = tick.market.ETH_USDC.price
+        current_price = tick.market.get_current_price()
         current_tick = tick.tick_number if hasattr(tick, 'tick_number') else 0
 
         if self.last_call_tick is None:

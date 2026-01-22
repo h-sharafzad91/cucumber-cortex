@@ -153,8 +153,13 @@ HOLD:
 {{"reasoning": "...", "action": "HOLD"}}"""
 
     def build_user_prompt(self, tick: TickPayload) -> str:
+        price_data = tick.market.get_price_data()
+        trading_pair = tick.market.trading_pair or "UNKNOWN"
+        current_price = price_data.price if price_data else 0.0
+        price_source = price_data.source if price_data else "unknown"
+
         price_trend = "Awaiting data"
-        price_history = tick.market.ETH_USDC.price_history
+        price_history = price_data.price_history if price_data else []
         if price_history and len(price_history) >= 2:
             first_price = price_history[0].price
             last_price = price_history[-1].price
@@ -174,7 +179,7 @@ HOLD:
             positions = " | ".join(pos_list) if pos_list else "None"
 
         user_prompt = f"""Tick#{tick.tick_id or "unknown"} | {tick.timestamp or "unknown"}
-ETH: ${tick.market.ETH_USDC.price if tick.market.ETH_USDC.price is not None else 0:.2f} ({tick.market.ETH_USDC.source or "unknown"}) | Trend: {price_trend}
+{trading_pair}: ${current_price:.2f} ({price_source}) | Trend: {price_trend}
 Cash: ${tick.portfolio.balance_usd if tick.portfolio.balance_usd is not None else 0:.2f} | Positions: {positions}
 Max order: ${tick.constraints.max_usd_order if tick.constraints.max_usd_order is not None else 0:.2f} | Trade: {", ".join(tick.constraints.allowed_assets) if tick.constraints.allowed_assets else "unknown"}
 
