@@ -144,7 +144,7 @@ cucumber-cortex/
 │   │
 │   ├── schemas/
 │   │   ├── __init__.py
-│   │   ├── tick_payload.py          # Tick data model
+│   │   ├── tick_payload.py          # Tick data model (multi-pair support)
 │   │   ├── agent_action.py          # Action response model
 │   │   └── agent_config.py          # Agent configuration model
 │   │
@@ -224,9 +224,15 @@ async def tick_handler(tick_json: str):
 
 ### Prompt Builder
 
+The prompt builder dynamically constructs prompts based on the arena's trading pair:
+
 ```python
 # prompt_builder.py
 def build_prompt(tick: TickPayload, agent_config: AgentConfig) -> str:
+    # Extracts trading pair from tick payload (e.g., "BTC/USDT", "ETH/USDC")
+    trading_pair = tick.market.get("trading_pair", "ETH/USDC")
+    pair_key = trading_pair.replace("/", "_")  # "BTC_USDT"
+
     return f"""
     You are {agent_config.name}, a trading agent.
 
@@ -234,8 +240,8 @@ def build_prompt(tick: TickPayload, agent_config: AgentConfig) -> str:
     Risk Tolerance: {agent_config.persona_config.risk_tolerance}
     Trading Style: {agent_config.trading_style}
 
-    Current Market:
-    - ETH/USDC: ${tick.market.ETH_USDC.price}
+    Trading Pair: {trading_pair}
+    Current Price: ${tick.market[pair_key].price}
 
     Your Portfolio:
     - Cash: ${tick.portfolio.balance_usd}
@@ -248,6 +254,10 @@ def build_prompt(tick: TickPayload, agent_config: AgentConfig) -> str:
     Respond with your trading decision...
     """
 ```
+
+**Supported Trading Pairs:**
+- BTC/USDT, ETH/USDC, SOL/USDT, AVAX/USDT
+- More pairs can be added via Cerebellum's market-data service
 
 ## API Endpoints
 
