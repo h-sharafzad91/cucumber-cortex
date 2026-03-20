@@ -48,6 +48,32 @@ class ActionParser:
                         tick_id=tick_id,
                         reasoning=f"Invalid SELL: missing asset or size_asset. Original: {data.get('reasoning', '')}",
                     )
+            elif action.action == ActionType.SHORT_MARKET:
+                if not action.asset or not action.size_usd:
+                    logger.warning(
+                        "short_missing_fields",
+                        action=action.action,
+                        asset=action.asset,
+                        size_usd=action.size_usd,
+                    )
+                    return AgentAction.hold(
+                        agent_id=agent_id,
+                        tick_id=tick_id,
+                        reasoning=f"Invalid SHORT: missing asset or size_usd. Original: {data.get('reasoning', '')}",
+                    )
+            elif action.action == ActionType.COVER_MARKET:
+                if not action.asset or not action.size_asset:
+                    logger.warning(
+                        "cover_missing_fields",
+                        action=action.action,
+                        asset=action.asset,
+                        size_asset=action.size_asset,
+                    )
+                    return AgentAction.hold(
+                        agent_id=agent_id,
+                        tick_id=tick_id,
+                        reasoning=f"Invalid COVER: missing asset or size_asset. Original: {data.get('reasoning', '')}",
+                    )
 
             logger.info(
                 "action_parsed",

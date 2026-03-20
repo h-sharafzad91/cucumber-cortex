@@ -23,7 +23,9 @@ def get_strategy_behavior(strategy: TradingStrategy, tick_interval: int | None) 
         return f"""MOMENTUM STRATEGY (Your tick interval: {tick_sec}s):
 - Expected price move per tick: ~{threshold}%
 - BUY when price shows upward movement (>{half_threshold}% is a signal for you)
-- SELL when you have a position AND price shows downward movement
+- SELL when you have a long position AND price shows downward movement
+- SHORT when price shows downward movement and you have no long position
+- COVER when you have a short position AND price shows upward movement
 - At {tick_sec}s intervals, don't wait for "big" moves - {threshold}% IS significant for you
 - Follow the trend direction, trade actively!"""
 
@@ -31,7 +33,9 @@ def get_strategy_behavior(strategy: TradingStrategy, tick_interval: int | None) 
         return f"""MEAN REVERSION STRATEGY (Your tick interval: {tick_sec}s):
 - Expected price move per tick: ~{threshold}%
 - BUY when price drops (a -{half_threshold}% dip is worth buying at {tick_sec}s intervals)
-- SELL when price rises and you have a position
+- SELL when price rises and you have a long position
+- SHORT when price rises above mean and you have no long position
+- COVER when price drops back toward mean and you have a short position
 - At {tick_sec}s intervals, a -{threshold}% move is already a "dip" - don't wait longer
 - Buy dips, sell rallies - act on the moves you see!"""
 
@@ -39,7 +43,9 @@ def get_strategy_behavior(strategy: TradingStrategy, tick_interval: int | None) 
         return f"""BREAKOUT STRATEGY (Your tick interval: {tick_sec}s):
 - Expected price move per tick: ~{threshold}%
 - BUY when price breaks upward (>{half_threshold}% move is a breakout for you)
-- SELL when price breaks downward and you have a position
+- SELL when price breaks downward and you have a long position
+- SHORT when price breaks downward and you have no long position
+- COVER when price breaks upward and you have a short position
 - At {tick_sec}s intervals, any clear directional move is a micro-breakout
 - Trade the breakouts you see, don't wait for bigger ones!"""
 
@@ -133,13 +139,18 @@ class PromptBuilder:
 DECISION GUIDELINES:
 - HOLD: When price movement is unclear, you just entered a position, or waiting for better signal
 - BUY: When your strategy signals an entry AND you have cash available
-- SELL: When your strategy signals an exit AND you have a position
+- SELL: When your strategy signals an exit AND you have a long position
+- SHORT: When your strategy signals a downward move AND you have no long position
+- COVER: When your strategy signals an upward move AND you have a short position
 
 CONSTRAINTS:
-1. Never exceed max_usd_order for BUY
+1. Never exceed max_usd_order for BUY or SHORT
 2. Only trade allowed_assets
-3. For SELL, you must own the asset
-4. Output ONLY valid JSON
+3. For SELL, you must own the asset (long position)
+4. You cannot SHORT while you have a LONG position in the same asset
+5. You cannot BUY while you have a SHORT position in the same asset
+6. COVER requires an existing short position
+7. Output ONLY valid JSON
 
 ACTION FORMATS:
 
@@ -148,6 +159,12 @@ BUY:
 
 SELL:
 {{"reasoning": "...", "action": "SELL_MARKET", "asset": "ETH", "size_asset": 0.5}}
+
+SHORT:
+{{"reasoning": "...", "action": "SHORT_MARKET", "asset": "ETH", "size_usd": 1000}}
+
+COVER:
+{{"reasoning": "...", "action": "COVER_MARKET", "asset": "ETH", "size_asset": 0.5}}
 
 HOLD:
 {{"reasoning": "...", "action": "HOLD"}}"""
@@ -175,7 +192,8 @@ HOLD:
             for p in tick.portfolio.positions:
                 entry = p.entry_price if p.entry_price is not None else 0
                 pnl = p.unrealized_pnl if p.unrealized_pnl is not None else 0
-                pos_list.append(f"{p.asset}:{p.size:.4f}@{entry:.0f}({pnl:+.0f})")
+                direction_label = "SHORT" if p.direction == "short" else "LONG"
+                pos_list.append(f"{p.asset}({direction_label}):{p.size:.4f}@{entry:.0f}({pnl:+.0f})")
             positions = " | ".join(pos_list) if pos_list else "None"
 
         user_prompt = f"""Tick#{tick.tick_id or "unknown"} | {tick.timestamp or "unknown"}

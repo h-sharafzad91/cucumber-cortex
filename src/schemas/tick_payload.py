@@ -81,6 +81,7 @@ class Position(BaseModel):
     entry_price: float
     current_price: float | None = None
     unrealized_pnl: float | None = None
+    direction: str | None = None
 
 
 class Portfolio(BaseModel):

@@ -5,6 +5,8 @@ from pydantic import BaseModel, field_validator
 class ActionType(str, Enum):
     BUY_MARKET = "BUY_MARKET"
     SELL_MARKET = "SELL_MARKET"
+    SHORT_MARKET = "SHORT_MARKET"
+    COVER_MARKET = "COVER_MARKET"
     HOLD = "HOLD"
 
 
@@ -27,6 +29,10 @@ class AgentAction(BaseModel):
                 return ActionType.BUY_MARKET
             if v in ["SELL", "SELL_MARKET"]:
                 return ActionType.SELL_MARKET
+            if v in ["SHORT", "SHORT_MARKET"]:
+                return ActionType.SHORT_MARKET
+            if v in ["COVER", "COVER_MARKET"]:
+                return ActionType.COVER_MARKET
             if v == "HOLD":
                 return ActionType.HOLD
         return v
