@@ -1,515 +1,78 @@
 # Cucumber Cortex
 
-AI trading agent service for Cucumber Trading Arena - the "brain" that makes trading decisions using LLMs. Named after the brain's cortex which handles complex decision-making, this service processes market data and makes intelligent trading decisions.
+**AI decision-worker service for Cucumber Trading Arena.**
 
-## System Architecture
+Cortex consumes market and portfolio updates from the Cerebellum backend, builds context for an AI trading agent, parses the model response into a structured action, and submits that action to Cerebellum for validation and processing.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           CUCUMBER TRADING ARENA                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│   ┌──────────────┐         ┌──────────────┐                                │
-│   │ cucumber-web │         │cucumber-admin│                                │
-│   │   Port 3000  │         │   Port 3002  │                                │
-│   └──────────────┘         └──────────────┘                                │
-│          │                        │                                         │
-│          │                        │                                         │
-│          ▼                        ▼                                         │
-│   ┌─────────────────────────────────────────────────────────────────┐      │
-│   │                    cucumber-cerebellum                           │      │
-│   │                        Port 3001                                 │      │
-│   └──────────────────────────────────┬───────────────────────────────┘      │
-│                                      │                                       │
-│              Tick Scheduler          │ Redis Pub/Sub                        │
-│              (per-agent)             │ arena:ticks:{roundId}:{agentId}      │
-│                                      ▼                                       │
-│   ┌─────────────────────────────────────────────────────────────────┐      │
-│   │              ★ cucumber-cortex (THIS REPO) ★                    │      │
-│   │                    (Python/FastAPI)                             │      │
-│   │                        Port 8000                                 │      │
-│   │                                                                  │      │
-│   │  ┌─────────────────────────────────────────────────────────┐   │      │
-│   │  │                  Inbound Layer                           │   │      │
-│   │  │  ┌─────────────┐  ┌─────────────┐                       │   │      │
-│   │  │  │   FastAPI   │  │    Redis    │                       │   │      │
-│   │  │  │  Endpoints  │  │  Subscriber │                       │   │      │
-│   │  │  └─────────────┘  └─────────────┘                       │   │      │
-│   │  └─────────────────────────────────────────────────────────┘   │      │
-│   │                              │                                  │      │
-│   │  ┌─────────────────────────────────────────────────────────┐   │      │
-│   │  │                  Processing Layer                        │   │      │
-│   │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │   │      │
-│   │  │  │    Agent     │  │   Prompt     │  │   Action     │  │   │      │
-│   │  │  │   Worker     │  │   Builder    │  │   Parser     │  │   │      │
-│   │  │  └──────────────┘  └──────────────┘  └──────────────┘  │   │      │
-│   │  └─────────────────────────────────────────────────────────┘   │      │
-│   │                              │                                  │      │
-│   │  ┌─────────────────────────────────────────────────────────┐   │      │
-│   │  │                  LLM Providers                           │   │      │
-│   │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │   │      │
-│   │  │  │  OpenAI  │ │ Anthropic│ │  Google  │ │   xAI    │   │   │      │
-│   │  │  │  GPT-4o  │ │  Claude  │ │  Gemini  │ │   Grok   │   │   │      │
-│   │  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘   │   │      │
-│   │  └─────────────────────────────────────────────────────────┘   │      │
-│   │                              │                                  │      │
-│   │  ┌─────────────────────────────────────────────────────────┐   │      │
-│   │  │                  Outbound Layer                          │   │      │
-│   │  │  ┌──────────────────────────────────────────────────┐   │   │      │
-│   │  │  │            Cerebellum Client                      │   │   │      │
-│   │  │  │      POST /v1/arena/:roundId/action              │   │   │      │
-│   │  │  └──────────────────────────────────────────────────┘   │   │      │
-│   │  └─────────────────────────────────────────────────────────┘   │      │
-│   └─────────────────────────────────────────────────────────────────┘      │
-│                                      │                                       │
-│                                      │ REST API                              │
-│                                      ▼                                       │
-│   ┌─────────────────────────────────────────────────────────────────┐      │
-│   │                    cucumber-cerebellum                           │      │
-│   │               (executes trade, updates PnL)                     │      │
-│   └─────────────────────────────────────────────────────────────────┘      │
-└─────────────────────────────────────────────────────────────────────────────┘
+The service separates probabilistic decision generation from the backend that owns trading-state changes.
+
+## Processing flow
+
+```text
+Cerebellum
+   │
+   └── Redis Pub/Sub: arena:ticks:{roundId}:{agentId}
+             │
+             ▼
+       Cucumber Cortex
+             │
+             ├── Build agent context
+             ├── Request an LLM decision
+             ├── Parse and validate the action
+             │
+             ▼
+       Cerebellum API
+       (action processing)
 ```
 
-## This Repository (cucumber-cortex)
+## Core responsibilities
 
-The AI trading agent that:
-- **Subscribes to per-agent Redis tick channels**: Listens to `arena:ticks:{roundId}:{agentId}` for each active agent. Each subscription runs independently, so Agent A getting its tick doesn't block Agent B
-- **Builds context-aware prompts with market data & portfolio**: Constructs a detailed prompt for the LLM including the agent's personality, current market prices, open positions, cash balance, and risk parameters
-- **Calls LLM providers (OpenAI, Anthropic, Google, xAI)**: Supports multiple LLM backends. The model is selected based on the agent's configuration (e.g., one agent uses GPT-4o, another uses Claude)
-- **Parses trading decisions from LLM responses**: Extracts structured action (BUY_MARKET, SELL_MARKET, HOLD), asset, size, and reasoning from the LLM's text response
-- **Submits actions back to Cerebellum for execution**: Sends HTTP POST to Cerebellum with the trade decision. Cerebellum handles actual execution and PnL calculation
+- Subscribe to per-agent tick channels through Redis.
+- Build prompts using agent configuration, market data, portfolio state, and risk constraints.
+- Call configured LLM providers through provider integrations.
+- Parse model output into structured trading actions and reasoning.
+- Submit proposed actions to Cerebellum over HTTP.
+- Keep decision generation separate from execution and state management.
 
-## Communication Flow
+## Technology
 
-### 1. Inbound: Redis Subscription (← Cerebellum)
-```
-cucumber-cerebellum  ───Redis───►  cucumber-cortex
-        │                                │
-        │ Per-agent tick channels:       │
-        │   arena:ticks:{roundId}:{agentId}
-        │                                │
-        │ Tick payload:                  │
-        │   - tick_id                    │
-        │   - market prices              │
-        │   - agent's portfolio          │
-        │   - trading constraints        │
-        └────────────────────────────────┘
-```
+| Area | Technologies |
+|---|---|
+| Runtime | Python 3.11+ |
+| API / service framework | FastAPI |
+| Data validation and settings | Pydantic, pydantic-settings |
+| LLM integration | OpenAI SDK; provider integrations are defined in the project |
+| Messaging | Redis |
+| HTTP client | HTTPX |
+| Logging | structlog |
+| Development | pytest, pytest-asyncio, Ruff |
 
-### 2. Processing: LLM Call
-```
-cucumber-cortex  ───API───►  LLM Provider
-        │                         │
-        │ Prompt includes:        │
-        │   - Agent persona       │
-        │   - Trading strategy    │
-        │   - Current positions   │
-        │   - Market data         │
-        │   - Risk parameters     │
-        │                         │
-        │ Response:               │
-        │   - Action (BUY/SELL/HOLD)
-        │   - Reasoning           │
-        │   - Size                │
-        └─────────────────────────┘
-```
+## Local development
 
-### 3. Outbound: Submit Action (→ Cerebellum)
-```
-cucumber-cortex  ───HTTP───►  cucumber-cerebellum
-        │                            │
-        │ POST /v1/arena/:id/action │
-        │   {                        │
-        │     agent_id,              │
-        │     tick_id,               │
-        │     action: "BUY_MARKET",  │
-        │     asset: "ETH_USDC",     │
-        │     size_usd: 100,         │
-        │     reasoning: "..."       │
-        │   }                        │
-        └────────────────────────────┘
-```
-
-## Project Structure
-
-```
-cucumber-cortex/
-├── src/
-│   ├── main.py                      # FastAPI application entry point
-│   │
-│   ├── config/
-│   │   ├── __init__.py
-│   │   └── settings.py              # Environment configuration
-│   │
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   ├── tick_payload.py          # Tick data model (multi-pair support)
-│   │   ├── agent_action.py          # Action response model
-│   │   └── agent_config.py          # Agent configuration model
-│   │
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── redis_subscriber.py      # Per-agent Redis subscription ★
-│   │   ├── cerebellum_client.py     # HTTP client to submit actions
-│   │   ├── prompt_builder.py        # LLM prompt construction
-│   │   ├── action_parser.py         # Parse LLM response to action
-│   │   └── smart_trigger.py         # Conditional tick processing
-│   │
-│   ├── workers/
-│   │   ├── __init__.py
-│   │   └── agent_worker.py          # Core processing logic ★
-│   │
-│   ├── llm_providers/
-│   │   ├── __init__.py
-│   │   ├── base.py                  # Base provider interface
-│   │   ├── factory.py               # Provider factory
-│   │   ├── router.py                # Multi-provider routing
-│   │   ├── models.py                # Model definitions
-│   │   ├── openai_provider.py       # OpenAI (GPT-4o, GPT-4o-mini)
-│   │   ├── anthropic_provider.py    # Anthropic (Claude 3.5 Sonnet)
-│   │   ├── google_provider.py       # Google (Gemini)
-│   │   └── xai_provider.py          # xAI (Grok)
-│   │
-│   └── utils/
-│       ├── __init__.py
-│       └── logger.py                # Structured logging
-│
-├── .env.example
-├── requirements.txt
-├── pyproject.toml
-├── Dockerfile
-└── README.md
-```
-
-## Key Components
-
-### Redis Subscriber (Per-Agent Channels)
-
-```python
-# redis_subscriber.py
-class RedisSubscriber:
-    async def subscribe_to_agent(self, round_id: str, agent_id: str, handler):
-        """Subscribe to individual agent tick channel"""
-        channel = f"arena:ticks:{round_id}:{agent_id}"
-        # Each agent has its own subscription
-        # Ticks arrive at agent's configured interval
-```
-
-**Why per-agent channels?**
-- Agent A (30s tick) and Agent B (60s tick) receive ticks at different times
-- Prevents message queue congestion
-- Allows Cortex to scale horizontally (different Cortex instances can handle different agents)
-
-### Agent Worker (Non-Blocking Processing)
-
-```python
-# main.py - Tick handler
-async def tick_handler(tick_json: str):
-    tick = TickPayload.parse_raw(tick_json)
-
-    # Process in background task (non-blocking)
-    async def process_in_background():
-        await worker.process_tick_and_submit(tick, round_id)
-
-    task = asyncio.create_task(process_in_background())
-    background_tasks.add(task)
-```
-
-**Why non-blocking?**
-- LLM API calls can take 2-30+ seconds (especially with rate limits)
-- If we `await` directly, subsequent ticks would be delayed
-- Background tasks allow multiple ticks to be processed concurrently
-- Critical for agents with fast tick intervals (10-15s)
-
-### Prompt Builder
-
-The prompt builder dynamically constructs prompts based on the arena's trading pair:
-
-```python
-# prompt_builder.py
-def build_prompt(tick: TickPayload, agent_config: AgentConfig) -> str:
-    # Extracts trading pair from tick payload (e.g., "BTC/USDT", "ETH/USDC")
-    trading_pair = tick.market.get("trading_pair", "ETH/USDC")
-    pair_key = trading_pair.replace("/", "_")  # "BTC_USDT"
-
-    return f"""
-    You are {agent_config.name}, a trading agent.
-
-    Strategy: {agent_config.persona_config.strategy}
-    Risk Tolerance: {agent_config.persona_config.risk_tolerance}
-    Trading Style: {agent_config.trading_style}
-
-    Trading Pair: {trading_pair}
-    Current Price: ${tick.market[pair_key].price}
-
-    Your Portfolio:
-    - Cash: ${tick.portfolio.balance_usd}
-    - Positions: {tick.portfolio.positions}
-
-    Leverage: {agent_config.leverage}x
-    Stop Loss: {agent_config.stop_loss_percent}%
-    Take Profit: {agent_config.take_profit_percent}%
-
-    Respond with your trading decision...
-    """
-```
-
-**Supported Trading Pairs:**
-- BTC/USDT, ETH/USDC, SOL/USDT, AVAX/USDT
-- More pairs can be added via Cerebellum's market-data service
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| POST | `/agents/add` | Add agent to worker pool |
-| DELETE | `/agents/{agent_id}` | Remove agent from pool |
-| GET | `/agents` | List agents in pool |
-| POST | `/subscribe` | Subscribe to round tick channel |
-| POST | `/unsubscribe` | Stop all subscriptions |
-| POST | `/process` | Manually trigger tick for all agents |
-| POST | `/process/single` | Process single agent tick |
-
-## LLM Providers
-
-| Provider | Models | Config Key | Cost (approx) |
-|----------|--------|------------|---------------|
-| OpenAI | gpt-4o, gpt-4o-mini | `OPENAI_API_KEY` | $0.15-2.50/1M tokens |
-| Anthropic | claude-3-5-sonnet | `ANTHROPIC_API_KEY` | $3-15/1M tokens |
-| Google | gemini-1.5-flash | `GOOGLE_API_KEY` | $0.075/1M tokens |
-| xAI | grok-beta | `XAI_API_KEY` | $5/1M tokens |
-
-### Model Selection
-
-Models are selected based on agent configuration:
-
-```python
-# In agent_config
-{
-    "worker_config": {
-        "model": "gpt-4o-mini",  # or "claude-3-5-sonnet", "gemini-1.5-flash"
-        "temperature": 0.7,      # Higher = more random/creative decisions
-        "max_tokens": 500        # Max response length
-    }
-}
-```
-
-**Choosing a model:**
-- **gpt-4o-mini**: Fast, cheap, good for high-frequency trading (10-30s ticks)
-- **gpt-4o**: More sophisticated reasoning, better for complex strategies
-- **claude-3-5-sonnet**: Strong reasoning, good at following complex instructions
-- **gemini-1.5-flash**: Very fast and cheap, good for simple strategies
-- **grok-beta**: Alternative option with different "personality"
-
-### Action Parsing
-
-The LLM returns a text response that must be parsed into structured action:
-
-```python
-# action_parser.py
-def parse_action(llm_response: str) -> AgentAction:
-    # LLM is prompted to respond in a specific format:
-    # ACTION: BUY_MARKET
-    # ASSET: ETH_USDC
-    # SIZE_USD: 100
-    # REASONING: ETH showing bullish momentum...
-
-    # Parser extracts these fields using regex or structured output
-    return AgentAction(
-        action="BUY_MARKET",
-        asset="ETH_USDC",
-        size_usd=100,
-        reasoning="ETH showing bullish momentum..."
-    )
-```
-
-## Tick Processing Flow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      TICK PROCESSING                             │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  1. Redis Subscriber receives tick                              │
-│     └─► arena:ticks:{roundId}:{agentId}                        │
-│                                                                  │
-│  2. Tick Handler (non-blocking)                                 │
-│     └─► asyncio.create_task(process_in_background())           │
-│                                                                  │
-│  3. Agent Worker                                                 │
-│     ├─► Fetch agent config from Cerebellum                     │
-│     ├─► Build prompt with market + portfolio data              │
-│     ├─► Call LLM provider                                       │
-│     └─► Parse response to action                                │
-│                                                                  │
-│  4. Cerebellum Client                                           │
-│     └─► POST /v1/arena/:roundId/action                         │
-│                                                                  │
-│  5. Done (next tick arrives based on agent's interval)         │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Setup
+Requirements: Python 3.11+ and a reachable Redis instance.
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-Edit `.env`:
-```env
-CEREBELLUM_URL=http://localhost:3001
-REDIS_URL=redis://localhost:6379
+Configure the required environment variables for Redis, the Cerebellum API, and the selected model provider. Keep API keys in local environment configuration; never commit secrets.
 
-# At least one LLM provider required
-OPENAI_API_KEY=sk-...
-# ANTHROPIC_API_KEY=sk-ant-...
-# GOOGLE_API_KEY=...
-# XAI_API_KEY=...
-```
+Start the service using the application entry point and configuration documented in the source.
 
-## Development
+## Design principle
 
-```bash
-uvicorn src.main:app --reload --port 8000
-```
+An LLM response is a proposal, not an authority. Cortex is responsible for generating and structuring a decision; Cerebellum remains the boundary that validates and processes the submitted action.
 
-## Production
+## Project status
 
-```bash
-uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
-```
+This is an actively developed AI-agent service within a multi-component trading-arena project. The repository should not be interpreted as evidence of profitable trading, audited financial execution, or production readiness.
 
-## Docker
+## Related component
 
-```bash
-docker build -t cucumber-cortex .
-docker run -p 8000:8000 --env-file .env cucumber-cortex
-```
+- [Cucumber Cerebellum](https://github.com/h-sharafzad91/cucumber-cerebellum) — orchestration and action-processing backend.
 
-## Related Repositories
+## Author
 
-| Repository | Description | Communication |
-|------------|-------------|---------------|
-| [cucumber-cerebellum](https://github.com/h-sharafzad91/cucumber-cerebellum) | Backend orchestration | Redis ← / HTTP → |
-| [cucumber-web](https://github.com/h-sharafzad91/cucumber-web) | User frontend | (indirect via Cerebellum) |
-| [cucumber-admin](https://github.com/h-sharafzad91/cucumber-admin) | Admin dashboard | (indirect via Cerebellum) |
-
-## Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `CEREBELLUM_URL` | Cerebellum API URL | Yes |
-| `REDIS_URL` | Redis connection string | Yes |
-| `OPENAI_API_KEY` | OpenAI API key | One of |
-| `ANTHROPIC_API_KEY` | Anthropic API key | these |
-| `GOOGLE_API_KEY` | Google AI API key | required |
-| `XAI_API_KEY` | xAI API key | |
-| `LOG_LEVEL` | Logging level | No (default: INFO) |
-
-## Performance Notes
-
-- **Non-blocking tick processing**: Each tick is processed in a background task, preventing slow LLM responses from blocking subsequent ticks
-- **Per-agent subscriptions**: Each agent subscribes to its own Redis channel, enabling independent tick intervals
-- **Rate limit handling**: If LLM rate limits are hit, processing continues for other agents
-
-## Railway Deployment
-
-### 1. Connect Repository
-1. Go to [Railway](https://railway.app) and open your Cucumber project
-2. Click "New Service" → "GitHub Repo"
-3. Select `h-sharafzad91/cucumber-cortex`
-
-### 2. Configure Environment Variables
-In Railway dashboard, add these variables:
-
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `CEREBELLUM_URL` | `http://cucumber-cerebellum.railway.internal:3001` | Internal URL (private networking) |
-| `REDIS_URL` | `${{Redis.REDIS_URL}}` | Reference Railway Redis plugin |
-| `OPENAI_API_KEY` | `sk-...` | Your OpenAI API key |
-| `ANTHROPIC_API_KEY` | `sk-ant-...` | Your Anthropic API key (optional) |
-| `GOOGLE_API_KEY` | `...` | Your Google AI API key (optional) |
-| `XAI_API_KEY` | `...` | Your xAI API key (optional) |
-| `LOG_LEVEL` | `INFO` | Logging level |
-| `PORT` | `8000` | Port for health checks |
-
-**Note:** At least one LLM provider API key is required. Add keys for providers your agents will use.
-
-### 3. Build Settings
-Railway auto-detects Python. Verify these settings:
-- **Builder**: Nixpacks
-- **Build Command**: `pip install -r requirements.txt`
-- **Start Command**: `uvicorn src.main:app --host 0.0.0.0 --port $PORT`
-
-### 4. Python Version
-Create a `runtime.txt` in the repo root if you need a specific Python version:
-```
-python-3.11
-```
-
-### 5. Private Networking
-Cortex uses Railway's private networking:
-- Internal communication with Cerebellum via `*.railway.internal`
-- Internal connection to Redis plugin
-- No public domain needed (Cortex has no public-facing API)
-
-### 6. Health Check
-Railway will use the `/health` endpoint to verify the service is running:
-```
-GET /health → {"status": "ok"}
-```
-
-### 7. Scaling Considerations
-For production with many agents:
-- Increase Railway service replicas
-- Consider separate Cortex instances per arena
-- Monitor LLM API rate limits
-
-### Railway Architecture (Cortex Position)
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    RAILWAY PROJECT                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌─────────────────┐    ┌─────────────────┐                │
-│  │  cucumber-web   │    │ cucumber-admin  │                │
-│  │   (Next.js)     │    │   (Next.js)     │                │
-│  │  Public Domain  │    │  Admin Domain   │                │
-│  └────────┬────────┘    └────────┬────────┘                │
-│           │                      │                          │
-│           └──────────┬───────────┘                          │
-│                      ▼                                       │
-│           ┌─────────────────┐                               │
-│           │cucumber-cerebellum│                              │
-│           │   (Node.js)     │                               │
-│           └────────┬────────┘                               │
-│                    │                                         │
-│        ┌───────────┼───────────┐                            │
-│        ▼           ▼           ▼                            │
-│  ┌──────────┐ ┌──────────┐ ┌─────────────────┐             │
-│  │PostgreSQL│ │  Redis   │ │ ★ cucumber-    │             │
-│  │ (Plugin) │ │ (Plugin) │ │    cortex ★    │             │
-│  └──────────┘ └────┬─────┘ │   (Python)     │             │
-│                    │       │  No Public URL  │             │
-│                    │       └────────┬────────┘             │
-│                    │                │                       │
-│                    └────────────────┘                       │
-│                    Redis Pub/Sub (Internal)                 │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Deployment Order
-Deploy Cortex AFTER Cerebellum and Redis are running:
-1. PostgreSQL plugin (first)
-2. Redis plugin (second)
-3. cucumber-cerebellum (third)
-4. cucumber-cortex (fourth) ← This service
-5. cucumber-web (fifth)
-6. cucumber-admin (sixth)
+Built by [Hossein Sharafzad](https://github.com/h-sharafzad91).
