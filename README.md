@@ -11,7 +11,7 @@ AI trading agent service for Cucumber Trading Arena - the "brain" that makes tra
 │                                                                              │
 │   ┌──────────────┐         ┌──────────────┐                                │
 │   │ cucumber-web │         │cucumber-admin│                                │
-│   │   Port 3000  │         │   Port 3002  │                                │
+│   │   Port 3000  │         │   Port 3003  │                                │
 │   └──────────────┘         └──────────────┘                                │
 │          │                        │                                         │
 │          │                        │                                         │
